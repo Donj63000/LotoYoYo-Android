@@ -15,6 +15,11 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -29,8 +34,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.yoyo_loto.core.GridFdjValidationResult
+import com.example.yoyo_loto.core.LotoFootFormat
+import com.example.yoyo_loto.core.MatchStatus
 import com.example.yoyo_loto.model.AppUiState
 import com.example.yoyo_loto.model.GridUiState
+import com.example.yoyo_loto.model.MatchUiState
 import com.example.yoyo_loto.ui.components.NeonButton
 import com.example.yoyo_loto.ui.components.NeonCard
 import com.example.yoyo_loto.ui.components.OutcomeToggle
@@ -44,7 +53,8 @@ import androidx.compose.ui.text.input.KeyboardType
 @Composable
 fun MainScreen(
     state: AppUiState,
-    onMatchCountChange: (String) -> Unit,
+    onFormatChange: (LotoFootFormat) -> Unit,
+    onRealMatchCountChange: (Int) -> Unit,
     onAddGrid: () -> Unit,
     onResetAll: () -> Unit,
     onRemoveGrid: (String) -> Unit,
@@ -87,8 +97,10 @@ fun MainScreen(
     ) {
         item {
             MatchInputRow(
-                matchCount = state.matchCountInput,
-                onMatchCountChange = onMatchCountChange,
+                selectedFormat = state.selectedFormat,
+                selectedRealMatchCount = state.selectedRealMatchCount,
+                onFormatChange = onFormatChange,
+                onRealMatchCountChange = onRealMatchCountChange,
                 onAddGrid = onAddGrid,
                 onReset = { showResetDialog = true }
             )
@@ -139,9 +151,12 @@ fun MainScreen(
 }
 
 @Composable
+@OptIn(ExperimentalMaterial3Api::class)
 private fun MatchInputRow(
-    matchCount: String,
-    onMatchCountChange: (String) -> Unit,
+    selectedFormat: LotoFootFormat,
+    selectedRealMatchCount: Int,
+    onFormatChange: (LotoFootFormat) -> Unit,
+    onRealMatchCountChange: (Int) -> Unit,
     onAddGrid: () -> Unit,
     onReset: () -> Unit
 ) {
@@ -157,27 +172,99 @@ private fun MatchInputRow(
                 color = MaterialTheme.colorScheme.primary
             )
             Spacer(modifier = Modifier.height(10.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.Top) {
                 val fieldSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-                OutlinedTextField(
-                    value = matchCount,
-                    onValueChange = onMatchCountChange,
-                    label = { Text("Matchs") },
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = TextMuted.copy(alpha = 0.5f),
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = TextMuted,
-                        cursorColor = MaterialTheme.colorScheme.primary,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedContainerColor = fieldSurface,
-                        unfocusedContainerColor = fieldSurface
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    var formatExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = formatExpanded,
+                        onExpandedChange = { formatExpanded = !formatExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedFormat.label,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Formule") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = formatExpanded)
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = TextMuted.copy(alpha = 0.5f),
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = TextMuted,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = fieldSurface,
+                                unfocusedContainerColor = fieldSurface
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        )
+                        DropdownMenu(
+                            expanded = formatExpanded,
+                            onDismissRequest = { formatExpanded = false }
+                        ) {
+                            LotoFootFormat.entries.forEach { format ->
+                                DropdownMenuItem(
+                                    text = { Text(format.label) },
+                                    onClick = {
+                                        formatExpanded = false
+                                        onFormatChange(format)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    var realExpanded by remember { mutableStateOf(false) }
+                    ExposedDropdownMenuBox(
+                        expanded = realExpanded,
+                        onExpandedChange = { realExpanded = !realExpanded }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedRealMatchCount.toString(),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text("Rencontres reelles") },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(expanded = realExpanded)
+                            },
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = TextMuted.copy(alpha = 0.5f),
+                                focusedLabelColor = MaterialTheme.colorScheme.primary,
+                                unfocusedLabelColor = TextMuted,
+                                cursorColor = MaterialTheme.colorScheme.primary,
+                                focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                                focusedContainerColor = fieldSurface,
+                                unfocusedContainerColor = fieldSurface
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor()
+                        )
+                        DropdownMenu(
+                            expanded = realExpanded,
+                            onDismissRequest = { realExpanded = false }
+                        ) {
+                            selectedFormat.allowedRealMatches.forEach { count ->
+                                DropdownMenuItem(
+                                    text = { Text(count.toString()) },
+                                    onClick = {
+                                        realExpanded = false
+                                        onRealMatchCountChange(count)
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     NeonButton(text = "Reset", onClick = onReset, color = NeonRed)
@@ -207,7 +294,7 @@ private fun GridCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "Grille #${grid.displayIndex} - ${grid.matchCount} match(s)",
+                    text = "Grille #${grid.displayIndex} - ${grid.format.label} (${grid.realMatchCount}/${grid.nominalMatchCount})",
                     style = MaterialTheme.typography.titleLarge,
                     color = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
@@ -222,7 +309,7 @@ private fun GridCard(
             grid.matches.forEachIndexed { index, match ->
                 SelectionRow(
                     matchIndex = index,
-                    selections = match.selections,
+                    match = match,
                     onToggle = onToggleSelection
                 )
             }
@@ -250,7 +337,7 @@ private fun GridCard(
                 grid.matches.forEachIndexed { index, match ->
                     OddsRow(
                         matchIndex = index,
-                        oddsInput = match.oddsInput,
+                        match = match,
                         onOddsInputChange = onOddsInputChange
                     )
                 }
@@ -262,6 +349,9 @@ private fun GridCard(
                 }
             }
             Spacer(modifier = Modifier.height(16.dp))
+            SectionTitle("Validation FDJ")
+            FdjValidationPanel(validation = grid.fdjValidation)
+            Spacer(modifier = Modifier.height(12.dp))
             SectionTitle("Statistiques")
             if (grid.isCalculating) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -281,8 +371,14 @@ private fun GridCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp, Alignment.End)
             ) {
-                NeonButton(text = "Calculer", onClick = onCalculate)
-                NeonButton(text = "Auto-grille", onClick = onAutoGrille, color = MaterialTheme.colorScheme.secondary)
+                val isValid = grid.fdjValidation.isOk
+                NeonButton(text = "Calculer", onClick = onCalculate, enabled = isValid)
+                NeonButton(
+                    text = "Auto-grille",
+                    onClick = onAutoGrille,
+                    color = MaterialTheme.colorScheme.secondary,
+                    enabled = isValid
+                )
             }
         }
     }
@@ -299,31 +395,93 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
+private fun FdjValidationPanel(validation: GridFdjValidationResult) {
+    val statusLabel = if (validation.isOk) "Valide FDJ" else "Non valide FDJ"
+    val statusColor = if (validation.isOk) NeonGreen else NeonRed
+    val stakeLabel = if (validation.isOk) "${validation.stake} EUR" else "--"
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text(
+            text = "Doubles: ${validation.doubles}  Triples: ${validation.triples}",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Mise: $stakeLabel",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Text(
+            text = "Statut: $statusLabel",
+            style = MaterialTheme.typography.bodyMedium,
+            color = statusColor
+        )
+        if (!validation.isOk) {
+            validation.errors.forEach { error ->
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = TextMuted
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun SelectionRow(
     matchIndex: Int,
-    selections: List<Boolean>,
+    match: MatchUiState,
     onToggle: (Int, Int) -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(vertical = 4.dp)
-    ) {
-        Text(
-            text = "M${matchIndex + 1}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextMuted,
-            modifier = Modifier.width(40.dp)
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutcomeToggle(label = "1", selected = selections[0], accent = NeonGreen) {
-                onToggle(matchIndex, 0)
+    val statusLabel = when (match.status) {
+        MatchStatus.NEUTRALIZED -> "Neutralisee"
+        MatchStatus.CANCELLED_BEFORE_BET -> "Annulee (gagnant pour tous)"
+        else -> null
+    }
+    val enabled = match.status == MatchStatus.ACTIVE
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "M${matchIndex + 1}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMuted,
+                modifier = Modifier.width(40.dp)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutcomeToggle(
+                    label = "1",
+                    selected = match.selections[0],
+                    accent = NeonGreen,
+                    enabled = enabled
+                ) {
+                    onToggle(matchIndex, 0)
+                }
+                OutcomeToggle(
+                    label = "N",
+                    selected = match.selections[1],
+                    accent = NeonOrange,
+                    enabled = enabled
+                ) {
+                    onToggle(matchIndex, 1)
+                }
+                OutcomeToggle(
+                    label = "2",
+                    selected = match.selections[2],
+                    accent = NeonRed,
+                    enabled = enabled
+                ) {
+                    onToggle(matchIndex, 2)
+                }
             }
-            OutcomeToggle(label = "N", selected = selections[1], accent = NeonOrange) {
-                onToggle(matchIndex, 1)
-            }
-            OutcomeToggle(label = "2", selected = selections[2], accent = NeonRed) {
-                onToggle(matchIndex, 2)
-            }
+        }
+        statusLabel?.let { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMuted,
+                modifier = Modifier.padding(start = 40.dp, top = 4.dp)
+            )
         }
     }
 }
@@ -346,41 +504,57 @@ private fun SelectionHeaderRow() {
 @Composable
 private fun OddsRow(
     matchIndex: Int,
-    oddsInput: List<String>,
+    match: MatchUiState,
     onOddsInputChange: (Int, Int, String) -> Unit
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(vertical = 4.dp)
-    ) {
-        Text(
-            text = "M${matchIndex + 1}",
-            style = MaterialTheme.typography.bodyMedium,
-            color = TextMuted,
-            modifier = Modifier.width(40.dp)
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            val fieldSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-            repeat(3) { idx ->
-                OutlinedTextField(
-                    value = oddsInput.getOrElse(idx) { "" },
-                    onValueChange = { onOddsInputChange(matchIndex, idx, it) },
-                    singleLine = true,
-                    modifier = Modifier.width(90.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = TextMuted.copy(alpha = 0.4f),
-                        focusedLabelColor = MaterialTheme.colorScheme.primary,
-                        unfocusedLabelColor = TextMuted,
-                        cursorColor = MaterialTheme.colorScheme.primary,
-                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
-                        focusedContainerColor = fieldSurface,
-                        unfocusedContainerColor = fieldSurface
+    val statusLabel = when (match.status) {
+        MatchStatus.NEUTRALIZED -> "Neutralisee"
+        MatchStatus.CANCELLED_BEFORE_BET -> "Annulee (gagnant pour tous)"
+        else -> null
+    }
+    val enabled = match.status == MatchStatus.ACTIVE
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = "M${matchIndex + 1}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = TextMuted,
+                modifier = Modifier.width(40.dp)
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                val fieldSurface = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                repeat(3) { idx ->
+                    OutlinedTextField(
+                        value = match.oddsInput.getOrElse(idx) { "" },
+                        onValueChange = { onOddsInputChange(matchIndex, idx, it) },
+                        singleLine = true,
+                        enabled = enabled,
+                        modifier = Modifier.width(90.dp),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = TextMuted.copy(alpha = 0.4f),
+                            focusedLabelColor = MaterialTheme.colorScheme.primary,
+                            unfocusedLabelColor = TextMuted,
+                            cursorColor = MaterialTheme.colorScheme.primary,
+                            focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                            focusedContainerColor = fieldSurface,
+                            unfocusedContainerColor = fieldSurface,
+                            disabledContainerColor = fieldSurface,
+                            disabledTextColor = TextMuted
+                        )
                     )
-                )
+                }
             }
+        }
+        statusLabel?.let { label ->
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextMuted,
+                modifier = Modifier.padding(start = 40.dp, top = 4.dp)
+            )
         }
     }
 }

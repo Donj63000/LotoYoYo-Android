@@ -113,7 +113,8 @@ fun YoYoLotoApp(viewModel: AppViewModel) {
                     when (state.screen) {
                         AppScreen.Main -> MainScreen(
                             state = state,
-                            onMatchCountChange = viewModel::updateMatchCountInput,
+                            onFormatChange = viewModel::setSelectedFormat,
+                            onRealMatchCountChange = viewModel::setSelectedRealMatchCount,
                             onAddGrid = viewModel::addGrid,
                             onResetAll = viewModel::resetAllGrids,
                             onRemoveGrid = viewModel::removeGrid,

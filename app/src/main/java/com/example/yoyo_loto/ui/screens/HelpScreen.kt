@@ -45,13 +45,13 @@ fun HelpScreen(onBack: () -> Unit) {
                     }
                     Spacer(modifier = Modifier.size(8.dp))
                     Text(
-                        text = "LotoYoYo est un outil pour creer des grilles optimisees.",
+                        text = "LotoYoYo applique les regles FDJ Loto Foot (point de vente).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextMuted
                     )
                     Spacer(modifier = Modifier.size(6.dp))
                     Text(
-                        text = "Logiciel dedie a Mr.MARION.",
+                        text = "Cette aide resume les regles prises en compte.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = TextMuted
                     )
@@ -92,76 +92,47 @@ private data class HelpSection(val title: String, val lines: List<String>)
 private fun helpSections(): List<HelpSection> {
     return listOf(
         HelpSection(
-            title = "Introduction",
+            title = "Formules FDJ",
             lines = listOf(
-                "Chaque match a trois issues : 1 (domicile), N (nul), 2 (exterieur).",
-                "Cochez une ou plusieurs issues pour couvrir plus de scenarios.",
-                "Plus de selections = plus de tickets et plus de budget."
+                "Loto Foot propose 4 formules : 7, 8, 12, 15.",
+                "Chaque grille est creee sur une formule fixe."
             )
         ),
         HelpSection(
-            title = "Creer une grille",
+            title = "Rencontres reelles",
             lines = listOf(
-                "Indiquez le nombre de matchs puis tapez Ajouter.",
-                "Choisissez les issues avec les boutons 1 / N / 2.",
-                "Saisissez les cotes et lancez Appliquer cotes."
+                "Si la liste est courte, les dernieres lignes sont neutralisees.",
+                "LF7 peut avoir 6, LF8 peut avoir 7, LF12 peut avoir 11/10/9, LF15 peut avoir 14/13/12.",
+                "Les lignes neutralisees ne comptent pas dans la mise ni dans les stats."
             )
         ),
         HelpSection(
-            title = "Statistiques",
+            title = "Doubles et triples",
             lines = listOf(
-                "Tickets : total des combinaisons issues de vos choix.",
-                "Couverture : part des 3^M scenarios couverts.",
-                "Couvrir tous : chance que le vrai scenario soit couvert.",
-                "Distribution : proba de 0..M bons pronostics."
+                "Les doubles/triples sont limites par le tableau FDJ.",
+                "Une combinaison non autorisee serait rejetee au terminal."
             )
         ),
         HelpSection(
-            title = "Auto-grille",
+            title = "Annulation avant prise de jeu",
             lines = listOf(
-                "Auto-grille genere les meilleurs scenarios dans vos choix.",
-                "Si les combinaisons sont enormes, la liste est limitee."
+                "Une rencontre annulee avant la prise de jeu est ignoree.",
+                "Pas besoin de cocher, elle est reputee gagnante."
             )
         ),
         HelpSection(
-            title = "Conseils",
+            title = "Resultat retenu",
             lines = listOf(
-                "Gardez les multi-choix la ou c est utile.",
-                "Verifiez les cotes pour des probabilites realistes.",
-                "Utilisez les stats pour equilibrer budget et couverture."
+                "Le resultat pris en compte est celui du temps reglementaire.",
+                "Prolongations et tirs au but ne comptent pas."
             )
         ),
         HelpSection(
-            title = "Limites",
+            title = "Avertissement",
             lines = listOf(
-                "Beaucoup de matchs font exploser les scenarios (3^M).",
-                "Le pire cas est exact seulement sur de petites grilles.",
-                "Le nombre de scenarios grimpe vite (3^M).",
-                "Les grilles tres grandes sont calculees avec des limites."
-            )
-        ),
-        HelpSection(
-            title = "A quoi ca sert",
-            lines = listOf(
-                "Composer des grilles Loto Foot rapidement.",
-                "Comparer budget, couverture et probabilites.",
-                "Generer des auto-grilles a partir des choix."
-            )
-        ),
-        HelpSection(
-            title = "Pour qui",
-            lines = listOf(
-                "Joueurs qui veulent structurer leurs pronostics.",
-                "Groupes qui mutualisent un budget.",
-                "Curieux qui veulent analyser leurs selections."
-            )
-        ),
-        HelpSection(
-            title = "Fonctions cle",
-            lines = listOf(
-                "Selections 1 / N / 2 par match.",
-                "Cotes et probabilites integrees.",
-                "Auto-grilles et statistiques detaillees."
+                "Application non officielle FDJ.",
+                "Ne calcule pas les gains (partage, rangs, etc.).",
+                "Outil d aide a la preparation."
             )
         )
     )

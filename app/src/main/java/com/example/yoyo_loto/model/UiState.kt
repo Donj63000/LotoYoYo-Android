@@ -1,6 +1,9 @@
 package com.example.yoyo_loto.model
 
 import androidx.compose.runtime.Immutable
+import com.example.yoyo_loto.core.GridFdjValidationResult
+import com.example.yoyo_loto.core.LotoFootFormat
+import com.example.yoyo_loto.core.MatchStatus
 
 @Immutable
 sealed class AppScreen {
@@ -12,7 +15,8 @@ sealed class AppScreen {
 @Immutable
 data class AppUiState(
     val screen: AppScreen = AppScreen.Main,
-    val matchCountInput: String = "7",
+    val selectedFormat: LotoFootFormat = LotoFootFormat.LF7,
+    val selectedRealMatchCount: Int = LotoFootFormat.LF7.nominalMatches,
     val grids: List<GridUiState> = emptyList(),
     val autoGrilleState: AutoGrilleUiState? = null,
     val snackbarMessage: String? = null
@@ -22,11 +26,14 @@ data class AppUiState(
 data class GridUiState(
     val id: String,
     val displayIndex: Int,
-    val matchCount: Int,
+    val format: LotoFootFormat,
+    val nominalMatchCount: Int,
+    val realMatchCount: Int,
     val matches: List<MatchUiState>,
     val useOdds: Boolean = true,
     val stats: GridStatsUiState = GridStatsUiState.empty(),
-    val isCalculating: Boolean = false
+    val isCalculating: Boolean = false,
+    val fdjValidation: GridFdjValidationResult
 )
 
 @Immutable
@@ -34,7 +41,8 @@ data class MatchUiState(
     val selections: List<Boolean>,
     val oddsInput: List<String>,
     val oddsApplied: List<Double>,
-    val probabilities: List<Double>
+    val probabilities: List<Double>,
+    val status: MatchStatus = MatchStatus.ACTIVE
 )
 
 @Immutable

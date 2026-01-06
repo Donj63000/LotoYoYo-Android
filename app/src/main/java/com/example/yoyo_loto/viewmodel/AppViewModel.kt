@@ -3,15 +3,20 @@ package com.example.yoyo_loto.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.example.yoyo_loto.core.DEFAULT_MATCH_COUNT
 import com.example.yoyo_loto.core.DEFAULT_ODDS
 import com.example.yoyo_loto.core.MAX_AUTO_GRILLES
 import com.example.yoyo_loto.core.MAX_EXACT_WORST_CASE_MATCHES
-import com.example.yoyo_loto.core.MAX_MATCHES
+import com.example.yoyo_loto.core.MAX_GRIDS_PER_FORMAT
+import com.example.yoyo_loto.core.MAX_GRIDS_TOTAL
 import com.example.yoyo_loto.core.MAX_SCENARIO_SAMPLES
 import com.example.yoyo_loto.core.MAX_TICKETS_ENUMERATION
+import com.example.yoyo_loto.core.FdjMatchSelection
+import com.example.yoyo_loto.core.GridFdjValidationResult
+import com.example.yoyo_loto.core.LotoFootFormat
+import com.example.yoyo_loto.core.MatchStatus
 import com.example.yoyo_loto.core.buildDistribution
 import com.example.yoyo_loto.core.combBig
+import com.example.yoyo_loto.core.computeStats
 import com.example.yoyo_loto.core.intToScen
 import com.example.yoyo_loto.core.kBestClosestScenarios
 import com.example.yoyo_loto.core.logPow
@@ -19,7 +24,7 @@ import com.example.yoyo_loto.core.oddsToProb
 import com.example.yoyo_loto.core.powBig
 import com.example.yoyo_loto.core.powInt
 import com.example.yoyo_loto.core.scenarioProbability
-import com.example.yoyo_loto.core.computeStats
+import com.example.yoyo_loto.core.validateFdjGrid
 import com.example.yoyo_loto.data.AppStateRepository
 import com.example.yoyo_loto.model.AppScreen
 import com.example.yoyo_loto.model.AppUiState
@@ -62,34 +67,62 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (saved != null) {
                 val maxIndex = saved.grids.maxOfOrNull { it.displayIndex } ?: 0
                 nextGridIndex = maxOf(1, maxOf(saved.nextGridIndex, maxIndex + 1))
-                _uiState.update { it.copy(matchCountInput = saved.matchCountInput, grids = saved.grids.map(::toGridUiState)) }
+                val format = LotoFootFormat.fromSerialized(saved.selectedFormat) ?: LotoFootFormat.LF7
+                val realCount = format.normalizeRealMatches(saved.selectedRealMatchCount)
+                _uiState.update {
+                    it.copy(
+                        selectedFormat = format,
+                        selectedRealMatchCount = realCount,
+                        grids = saved.grids.map(::toGridUiState)
+                    )
+                }
             }
         }
     }
 
-    fun updateMatchCountInput(value: String) {
-        val filtered = value.filter { it.isDigit() }
-        _uiState.update { it.copy(matchCountInput = filtered) }
+    fun setSelectedFormat(format: LotoFootFormat) {
+        val normalizedReal = format.normalizeRealMatches(_uiState.value.selectedRealMatchCount)
+        _uiState.update {
+            it.copy(selectedFormat = format, selectedRealMatchCount = normalizedReal)
+        }
+        scheduleSave()
+    }
+
+    fun setSelectedRealMatchCount(value: Int) {
+        val format = _uiState.value.selectedFormat
+        val normalized = format.normalizeRealMatches(value)
+        _uiState.update { it.copy(selectedRealMatchCount = normalized) }
         scheduleSave()
     }
 
     fun addGrid() {
-        val raw = _uiState.value.matchCountInput.trim()
-        val parsed = raw.toIntOrNull() ?: DEFAULT_MATCH_COUNT
-        if (parsed <= 0) {
-            showMessage("Le nombre de matchs doit etre > 0.")
+        val state = _uiState.value
+        val format = state.selectedFormat
+        if (state.grids.size >= MAX_GRIDS_TOTAL) {
+            showMessage("Maximum de grilles atteint (${MAX_GRIDS_TOTAL}).")
             return
         }
-        val clamped = min(parsed, MAX_MATCHES)
-        if (clamped != parsed) {
-            showMessage("Nombre de matchs limite a $MAX_MATCHES.")
+        val sameFormatCount = state.grids.count { it.format == format }
+        if (sameFormatCount >= MAX_GRIDS_PER_FORMAT) {
+            showMessage("Maximum de ${MAX_GRIDS_PER_FORMAT} grilles pour ${format.label}.")
+            return
         }
+        val realMatchCount = format.normalizeRealMatches(state.selectedRealMatchCount)
+        val matches = buildMatches(format, realMatchCount)
+        val validation = validateFdjGrid(
+            format,
+            realMatchCount,
+            matches.map { FdjMatchSelection(it.selections, it.status) }
+        )
         val grid = GridUiState(
             id = "grid_${System.currentTimeMillis()}_${nextGridIndex}",
             displayIndex = nextGridIndex,
-            matchCount = clamped,
-            matches = List(clamped) { defaultMatch() },
-            useOdds = true
+            format = format,
+            nominalMatchCount = format.nominalMatches,
+            realMatchCount = realMatchCount,
+            matches = matches,
+            useOdds = true,
+            fdjValidation = validation
         )
         nextGridIndex += 1
         _uiState.update { it.copy(grids = it.grids + grid) }
@@ -102,32 +135,26 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleSelection(gridId: String, matchIndex: Int, outcomeIndex: Int) {
-        _uiState.update { state ->
-            val updated = state.grids.map { grid ->
-                if (grid.id != gridId) grid else updateMatch(grid, matchIndex) { match ->
-                    val selections = match.selections.mapIndexed { idx, value ->
-                        if (idx == outcomeIndex) !value else value
-                    }
-                    match.copy(selections = selections)
+        updateGridAndValidation(gridId) { grid ->
+            updateMatch(grid, matchIndex) { match ->
+                val selections = match.selections.mapIndexed { idx, value ->
+                    if (idx == outcomeIndex) !value else value
                 }
+                match.copy(selections = selections)
             }
-            state.copy(grids = updated)
         }
         scheduleSave()
     }
 
     fun updateOddsInput(gridId: String, matchIndex: Int, outcomeIndex: Int, value: String) {
         val sanitized = value.replace(',', '.').filter { it.isDigit() || it == '.' }
-        _uiState.update { state ->
-            val updated = state.grids.map { grid ->
-                if (grid.id != gridId) grid else updateMatch(grid, matchIndex) { match ->
-                    val odds = match.oddsInput.mapIndexed { idx, v ->
-                        if (idx == outcomeIndex) sanitized else v
-                    }
-                    match.copy(oddsInput = odds)
+        updateGridAndValidation(gridId) { grid ->
+            updateMatch(grid, matchIndex) { match ->
+                val odds = match.oddsInput.mapIndexed { idx, v ->
+                    if (idx == outcomeIndex) sanitized else v
                 }
+                match.copy(oddsInput = odds)
             }
-            state.copy(grids = updated)
         }
         scheduleSave()
     }
@@ -136,6 +163,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val grid = _uiState.value.grids.firstOrNull { it.id == gridId } ?: return
         val updatedMatches = mutableListOf<MatchUiState>()
         for (match in grid.matches) {
+            if (match.status != MatchStatus.ACTIVE) {
+                updatedMatches.add(match)
+                continue
+            }
             val parsed = match.oddsInput.map { parseOdd(it) }
             if (parsed.any { it == null }) {
                 showMessage("Cote invalide.")
@@ -149,21 +180,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val probs = oddsToProb(odds[0], odds[1], odds[2]).toList()
             updatedMatches.add(match.copy(oddsApplied = odds, probabilities = probs))
         }
-        _uiState.update { state ->
-            val updated = state.grids.map { g ->
-                if (g.id != gridId) g else g.copy(matches = updatedMatches)
-            }
-            state.copy(grids = updated)
-        }
+        updateGridAndValidation(gridId) { it.copy(matches = updatedMatches) }
         showMessage("Cotes appliquees.")
         scheduleSave()
     }
 
     fun calculateGrid(gridId: String) {
+        val grid = _uiState.value.grids.firstOrNull { it.id == gridId } ?: return
+        val validation = validateFdjGridState(grid)
+        if (!validation.isOk) {
+            showMessage(validationMessage(validation))
+            return
+        }
         setGridLoading(gridId, true)
         viewModelScope.launch(Dispatchers.Default) {
-            val grid = _uiState.value.grids.firstOrNull { it.id == gridId } ?: return@launch
-            val stats = computeStatsForGrid(grid)
+            val latestGrid = _uiState.value.grids.firstOrNull { it.id == gridId } ?: return@launch
+            val stats = computeStatsForGrid(latestGrid)
             _uiState.update { state ->
                 val updated = state.grids.map { g ->
                     if (g.id != gridId) g else g.copy(stats = stats, isCalculating = false)
@@ -177,8 +209,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun openAutoGrille(gridId: String) {
         viewModelScope.launch(Dispatchers.Default) {
             val grid = _uiState.value.grids.firstOrNull { it.id == gridId } ?: return@launch
-            val matchCount = grid.matchCount
-            val allowedChoices = grid.matches.map { match ->
+            val validation = validateFdjGridState(grid)
+            if (!validation.isOk) {
+                showMessage(validationMessage(validation))
+                return@launch
+            }
+            val activeMatches = grid.matches.filter { it.status == MatchStatus.ACTIVE }
+            if (activeMatches.isEmpty()) {
+                showMessage("Aucune rencontre active.")
+                return@launch
+            }
+            val matchCount = activeMatches.size
+            val allowedChoices = activeMatches.map { match ->
                 match.selections.mapIndexedNotNull { idx, selected -> if (selected) idx else null }
             }
             if (allowedChoices.any { it.isEmpty() }) {
@@ -192,7 +234,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val k = if (combosInt == null) maxK else min(combosInt, maxK)
             val limited = combosInt == null || combosInt > maxK
 
-            val probList = probabilitiesForGrid(grid).map { it.toDoubleArray() }.toTypedArray()
+            val probList = probabilitiesForMatches(activeMatches, grid.useOdds)
+                .map { it.toDoubleArray() }
+                .toTypedArray()
             val scenarios = kBestClosestScenarios(probList, allowedChoices, k)
 
             val items = scenarios.mapIndexed { index, sc ->
@@ -244,12 +288,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setUseOdds(gridId: String, enabled: Boolean) {
-        _uiState.update { state ->
-            val updated = state.grids.map { grid ->
-                if (grid.id != gridId) grid else grid.copy(useOdds = enabled)
-            }
-            state.copy(grids = updated)
-        }
+        updateGridAndValidation(gridId) { it.copy(useOdds = enabled) }
         scheduleSave()
     }
 
@@ -277,20 +316,58 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun defaultMatch(): MatchUiState {
+    private fun updateGridAndValidation(
+        gridId: String,
+        transform: (GridUiState) -> GridUiState
+    ) {
+        _uiState.update { state ->
+            val updated = state.grids.map { grid ->
+                if (grid.id != gridId) {
+                    grid
+                } else {
+                    val updatedGrid = transform(grid)
+                    updatedGrid.copy(fdjValidation = validateFdjGridState(updatedGrid))
+                }
+            }
+            state.copy(grids = updated)
+        }
+    }
+
+    private fun validateFdjGridState(grid: GridUiState): GridFdjValidationResult {
+        return validateFdjGrid(
+            grid.format,
+            grid.realMatchCount,
+            grid.matches.map { FdjMatchSelection(it.selections, it.status) }
+        )
+    }
+
+    private fun validationMessage(validation: GridFdjValidationResult): String {
+        if (validation.errors.isEmpty()) return "Grille FDJ non valide."
+        return "Grille FDJ non valide: ${validation.errors.joinToString(" ")}"
+    }
+
+    private fun defaultMatch(status: MatchStatus = MatchStatus.ACTIVE): MatchUiState {
         val odds = DEFAULT_ODDS.toList()
         val probs = oddsToProb(odds[0], odds[1], odds[2]).toList()
         return MatchUiState(
             selections = listOf(false, false, false),
             oddsInput = odds.map { format2(it) },
             oddsApplied = odds,
-            probabilities = probs
+            probabilities = probs,
+            status = status
         )
+    }
+
+    private fun buildMatches(format: LotoFootFormat, realMatchCount: Int): List<MatchUiState> {
+        return List(format.nominalMatches) { index ->
+            val status = if (index < realMatchCount) MatchStatus.ACTIVE else MatchStatus.NEUTRALIZED
+            defaultMatch(status)
+        }
     }
 
     private fun updateMatch(grid: GridUiState, matchIndex: Int, transform: (MatchUiState) -> MatchUiState): GridUiState {
         val updatedMatches = grid.matches.mapIndexed { idx, match ->
-            if (idx == matchIndex) transform(match) else match
+            if (idx == matchIndex && match.status == MatchStatus.ACTIVE) transform(match) else match
         }
         return grid.copy(matches = updatedMatches)
     }
@@ -299,10 +376,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return text.replace(',', '.').toDoubleOrNull()
     }
 
+    private fun parseMatchStatus(value: String?): MatchStatus {
+        if (value.isNullOrBlank()) return MatchStatus.ACTIVE
+        return MatchStatus.entries.firstOrNull { it.name == value } ?: MatchStatus.ACTIVE
+    }
+
     private fun computeStatsForGrid(grid: GridUiState): GridStatsUiState {
-        val matchCount = grid.matchCount
-        val selections = grid.matches.map { it.selections }
-        val probList = probabilitiesForGrid(grid)
+        val activeMatches = grid.matches.filter { it.status == MatchStatus.ACTIVE }
+        val matchCount = activeMatches.size
+        if (matchCount == 0) return GridStatsUiState.empty()
+        val selections = activeMatches.map { it.selections }
+        val probList = probabilitiesForMatches(activeMatches, grid.useOdds)
 
         var combos = BigInteger.ONE
         var logCombos = 0.0
@@ -533,7 +617,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun toGridUiState(saved: SavedGridState): GridUiState {
-        val matches = saved.matches.map { match ->
+        val format = LotoFootFormat.fromSerialized(saved.format) ?: LotoFootFormat.LF7
+        val realMatchCount = format.normalizeRealMatches(saved.realMatchCount)
+        val matches = saved.matches.mapIndexed { index, match ->
             val oddsApplied = if (match.oddsApplied.size == 3) match.oddsApplied else DEFAULT_ODDS.toList()
             val probs = oddsToProb(oddsApplied[0], oddsApplied[1], oddsApplied[2]).toList()
             val selections = when (match.selections.size) {
@@ -541,19 +627,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 else -> listOf(false, false, false)
             }
             val oddsInput = if (match.oddsInput.size == 3) match.oddsInput else oddsApplied.map { format2(it) }
+            val storedStatus = parseMatchStatus(match.status)
+            val adjustedStatus = when {
+                index >= realMatchCount -> MatchStatus.NEUTRALIZED
+                storedStatus == MatchStatus.NEUTRALIZED -> MatchStatus.ACTIVE
+                else -> storedStatus
+            }
             MatchUiState(
                 selections = selections,
                 oddsInput = oddsInput,
                 oddsApplied = oddsApplied,
-                probabilities = probs
+                probabilities = probs,
+                status = adjustedStatus
             )
         }
+        val validation = validateFdjGrid(
+            format,
+            realMatchCount,
+            matches.map { FdjMatchSelection(it.selections, it.status) }
+        )
         return GridUiState(
             id = saved.id,
             displayIndex = saved.displayIndex,
-            matchCount = saved.matchCount,
+            format = format,
+            nominalMatchCount = format.nominalMatches,
+            realMatchCount = realMatchCount,
             matches = matches,
-            useOdds = saved.useOdds
+            useOdds = saved.useOdds,
+            fdjValidation = validation
         )
     }
 
@@ -563,28 +664,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             SavedGridState(
                 id = grid.id,
                 displayIndex = grid.displayIndex,
-                matchCount = grid.matchCount,
+                format = grid.format.name,
+                realMatchCount = grid.realMatchCount,
                 matches = grid.matches.map { match ->
                     SavedMatchState(
                         selections = match.selections,
                         oddsInput = match.oddsInput,
-                        oddsApplied = match.oddsApplied
+                        oddsApplied = match.oddsApplied,
+                        status = match.status.name
                     )
                 },
                 useOdds = grid.useOdds
             )
         }
         return SavedAppState(
-            matchCountInput = state.matchCountInput,
+            selectedFormat = state.selectedFormat.name,
+            selectedRealMatchCount = state.selectedRealMatchCount,
             nextGridIndex = nextGridIndex,
             grids = grids
         )
     }
 
-    private fun probabilitiesForGrid(grid: GridUiState): List<List<Double>> {
-        if (grid.useOdds) return grid.matches.map { it.probabilities }
+    private fun probabilitiesForMatches(matches: List<MatchUiState>, useOdds: Boolean): List<List<Double>> {
+        if (useOdds) return matches.map { it.probabilities }
         val uniform = listOf(1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0)
-        return List(grid.matches.size) { uniform }
+        return List(matches.size) { uniform }
     }
 
     private fun scheduleSave() {

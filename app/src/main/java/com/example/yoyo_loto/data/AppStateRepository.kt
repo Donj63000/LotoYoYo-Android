@@ -6,6 +6,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.yoyo_loto.core.DEFAULT_MATCH_COUNT
 import com.example.yoyo_loto.core.DEFAULT_ODDS
+import com.example.yoyo_loto.core.LotoFootFormat
+import com.example.yoyo_loto.core.MatchStatus
 import com.example.yoyo_loto.model.SavedAppState
 import com.example.yoyo_loto.model.SavedGridState
 import com.example.yoyo_loto.model.SavedMatchState
@@ -33,14 +35,16 @@ class AppStateRepository(private val context: Context) {
 
     private fun encodeState(state: SavedAppState): String {
         val root = JSONObject()
-        root.put("matchCountInput", state.matchCountInput)
+        root.put("selectedFormat", state.selectedFormat)
+        root.put("selectedRealMatchCount", state.selectedRealMatchCount)
         root.put("nextGridIndex", state.nextGridIndex)
         val gridsArray = JSONArray()
         for (grid in state.grids) {
             val gridObj = JSONObject()
             gridObj.put("id", grid.id)
             gridObj.put("displayIndex", grid.displayIndex)
-            gridObj.put("matchCount", grid.matchCount)
+            gridObj.put("format", grid.format)
+            gridObj.put("realMatchCount", grid.realMatchCount)
             gridObj.put("useOdds", grid.useOdds)
             val matchesArray = JSONArray()
             for (match in grid.matches) {
@@ -48,6 +52,7 @@ class AppStateRepository(private val context: Context) {
                 matchObj.put("selections", JSONArray(match.selections))
                 matchObj.put("oddsInput", JSONArray(match.oddsInput))
                 matchObj.put("oddsApplied", JSONArray(match.oddsApplied))
+                matchObj.put("status", match.status)
                 matchesArray.put(matchObj)
             }
             gridObj.put("matches", matchesArray)
@@ -60,7 +65,14 @@ class AppStateRepository(private val context: Context) {
     private fun parseState(json: String): SavedAppState? {
         return try {
             val root = JSONObject(json)
-            val matchCountInput = root.optString("matchCountInput", DEFAULT_MATCH_COUNT.toString())
+            val legacyMatchCountInput = root.optString("matchCountInput", DEFAULT_MATCH_COUNT.toString())
+            val legacyMatchCount = legacyMatchCountInput.toIntOrNull() ?: DEFAULT_MATCH_COUNT
+            val selectedFormat = LotoFootFormat.fromSerialized(root.optString("selectedFormat", ""))
+                ?: LotoFootFormat.fromMatchCount(legacyMatchCount)
+                ?: LotoFootFormat.LF7
+            val selectedRealMatchCount = selectedFormat.normalizeRealMatches(
+                root.optInt("selectedRealMatchCount", selectedFormat.nominalMatches)
+            )
             val nextGridIndex = root.optInt("nextGridIndex", 1)
             val gridsArray = root.optJSONArray("grids") ?: JSONArray()
             val grids = mutableListOf<SavedGridState>()
@@ -68,7 +80,12 @@ class AppStateRepository(private val context: Context) {
                 val gridObj = gridsArray.optJSONObject(i) ?: continue
                 val id = gridObj.optString("id", "grid_$i")
                 val displayIndex = gridObj.optInt("displayIndex", i + 1)
-                val matchCount = gridObj.optInt("matchCount", DEFAULT_MATCH_COUNT)
+                val format = LotoFootFormat.fromSerialized(gridObj.optString("format", ""))
+                    ?: LotoFootFormat.fromMatchCount(gridObj.optInt("matchCount", DEFAULT_MATCH_COUNT))
+                    ?: LotoFootFormat.LF7
+                val realMatchCount = format.normalizeRealMatches(
+                    gridObj.optInt("realMatchCount", format.nominalMatches)
+                )
                 val useOdds = gridObj.optBoolean("useOdds", true)
                 val matchesArray = gridObj.optJSONArray("matches") ?: JSONArray()
                 val matches = mutableListOf<SavedMatchState>()
@@ -77,30 +94,53 @@ class AppStateRepository(private val context: Context) {
                     val selections = toBooleanList(matchObj.optJSONArray("selections"), 3, false)
                     val oddsInput = toStringList(matchObj.optJSONArray("oddsInput"), DEFAULT_ODDS.map { it.toString() })
                     val oddsApplied = toDoubleList(matchObj.optJSONArray("oddsApplied"), DEFAULT_ODDS.toList())
-                    matches.add(SavedMatchState(selections, oddsInput, oddsApplied))
+                    val status = parseStatus(matchObj.optString("status", MatchStatus.ACTIVE.name))
+                    matches.add(SavedMatchState(selections, oddsInput, oddsApplied, status.name))
                 }
-                val normalizedMatches = normalizeMatches(matchCount, matches)
-                grids.add(SavedGridState(id, displayIndex, matchCount, normalizedMatches, useOdds))
+                val normalizedMatches = normalizeMatches(format, realMatchCount, matches)
+                grids.add(
+                    SavedGridState(
+                        id = id,
+                        displayIndex = displayIndex,
+                        format = format.name,
+                        realMatchCount = realMatchCount,
+                        matches = normalizedMatches,
+                        useOdds = useOdds
+                    )
+                )
             }
-            SavedAppState(matchCountInput, nextGridIndex, grids)
+            SavedAppState(selectedFormat.name, selectedRealMatchCount, nextGridIndex, grids)
         } catch (_: Exception) {
             null
         }
     }
 
-    private fun normalizeMatches(matchCount: Int, matches: List<SavedMatchState>): List<SavedMatchState> {
-        if (matches.size == matchCount) return matches
+    private fun normalizeMatches(
+        format: LotoFootFormat,
+        realMatchCount: Int,
+        matches: List<SavedMatchState>
+    ): List<SavedMatchState> {
+        val matchCount = format.nominalMatches
         val normalized = matches.toMutableList()
         while (normalized.size < matchCount) {
             normalized.add(
                 SavedMatchState(
                     selections = listOf(false, false, false),
                     oddsInput = DEFAULT_ODDS.map { it.toString() },
-                    oddsApplied = DEFAULT_ODDS.toList()
+                    oddsApplied = DEFAULT_ODDS.toList(),
+                    status = MatchStatus.ACTIVE.name
                 )
             )
         }
-        return normalized.take(matchCount)
+        return normalized.take(matchCount).mapIndexed { index, match ->
+            val originalStatus = parseStatus(match.status)
+            val adjustedStatus = when {
+                index >= realMatchCount -> MatchStatus.NEUTRALIZED
+                originalStatus == MatchStatus.NEUTRALIZED -> MatchStatus.ACTIVE
+                else -> originalStatus
+            }
+            match.copy(status = adjustedStatus.name)
+        }
     }
 
     private fun toBooleanList(array: JSONArray?, size: Int, default: Boolean): List<Boolean> {
@@ -124,5 +164,10 @@ class AppStateRepository(private val context: Context) {
             out.add(array.optDouble(i, fallback.getOrElse(i) { 1.0 }))
         }
         return if (out.isEmpty()) fallback else out
+    }
+
+    private fun parseStatus(value: String?): MatchStatus {
+        if (value.isNullOrBlank()) return MatchStatus.ACTIVE
+        return MatchStatus.entries.firstOrNull { it.name == value } ?: MatchStatus.ACTIVE
     }
 }
